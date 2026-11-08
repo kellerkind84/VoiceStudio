@@ -221,6 +221,49 @@ def test_stream_format_audio_and_sse(client, engine):
     assert len(audio) == 4800
 
 
+def test_pcm_stream_yields_first_sentence_before_rendering_second(engine):
+    import asyncio
+
+    from api.routers.openai_compat import SpeechRequest, create_speech
+
+    async def exercise():
+        first = "This is the first sentence."
+        second = "Here is the second sentence."
+        response = await create_speech(SpeechRequest(
+            model="tts-1", input=f"{first} {second}", response_format="pcm",
+            stream_format="audio", num_step=8, language="en",
+        ))
+        assert [text for text, _ in engine.calls] == [first]
+        stream = response.body_iterator
+        assert len(await anext(stream)) == 4800
+        assert [text for text, _ in engine.calls] == [first]
+        assert len(await anext(stream)) == 4800
+        assert engine.calls[-1] == (second, engine.calls[0][1])
+        assert engine.calls[-1][1]["num_step"] == 8
+        with pytest.raises(StopAsyncIteration):
+            await anext(stream)
+
+        response = await create_speech(SpeechRequest(
+            model="tts-1", input=f"{first} {second}", response_format="pcm", stream_format="sse",
+        ))
+        stream = response.body_iterator
+        assert '"type": "speech.audio.delta"' in await anext(stream)
+        await stream.aclose()
+        assert [text for text, _ in engine.calls] == [first, second, first]
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("fmt,duration", [("wav", None), ("pcm", 2)])
+def test_speech_stream_keeps_container_and_duration_whole(client, engine, fmt, duration):
+    text = "This is the first sentence. Here is the second sentence."
+    client.audio.speech.create(
+        model="tts-1", voice="alloy", input=text, response_format=fmt, stream_format="audio",
+        extra_body={"duration": duration},
+    )
+    assert [value for value, _ in engine.calls] == [text]
+
+
 def test_unknown_model_is_openai_error(client, engine):
     with pytest.raises(openai.BadRequestError) as ei:
         client.audio.speech.create(model="no-such-model", voice="alloy", input="Hi.")
