@@ -3177,8 +3177,22 @@ class MLXAudioBackend(TTSBackend):
             return kind == "voice_design"
         return "voicedesign" in (self._model_id or "").lower()
 
-    def generate(self, text: str, **kw) -> torch.Tensor:
+    def can_stream(self, **kw):
+        return self._curated_key() == "qwen3-tts-base" and kw.get("speed", 1.0) == 1.0
+
+    def stream_audio(self, text, **kw):
         import numpy as np
+        from contextlib import closing
+
+        with closing(self._generate_results(text, streaming=True, **kw)) as results:
+            for result in results:
+                if result.sample_rate != self.sample_rate:
+                    raise RuntimeError(f"Unexpected Qwen sample rate {result.sample_rate}")
+                audio = np.asarray(result.audio, dtype=np.float32).copy()
+                if audio.size:
+                    yield torch.from_numpy(audio).reshape(1, -1)
+
+    def _generate_results(self, text: str, *, streaming=False, **kw):
         self._ensure_loaded()
 
         voice     = kw.get("voice")
@@ -3317,6 +3331,13 @@ class MLXAudioBackend(TTSBackend):
                     )
                 }
 
+        if streaming:
+            kwargs.update(stream=True, streaming_interval=0.48)
+        yield from generate(**kwargs)
+
+    def generate(self, text: str, **kw) -> torch.Tensor:
+        import numpy as np
+
         def collect(results):
             groups = []
             rate = None
@@ -3346,7 +3367,7 @@ class MLXAudioBackend(TTSBackend):
             flush()
             return groups
 
-        pieces = collect(generate(**kwargs))
+        pieces = collect(self._generate_results(text, **kw))
 
         if not pieces:
             raise RuntimeError(f"mlx-audio ({self._model_id}) produced no audio")
@@ -3909,6 +3930,7 @@ class SherpaOnnxBackend(TTSBackend):
 # the descriptor below.
 
 _LAZY_REGISTRY: dict[str, tuple[str, str]] = {
+    "qwen3-tts": ("services.qwen_cuda", "QwenCUDABackend"),
     "indextts2": ("engines.indextts", "IndexTTS2Backend"),
     # Phase 4 Plan 04-01 (GGUF-03): hardware-adaptive GGUF runtime wrapper.
     # Lazy so the import of services.tts_backend doesn't pull

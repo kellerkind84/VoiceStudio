@@ -31,6 +31,7 @@ Reference: https://platform.openai.com/docs/api-reference/audio
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import io
 import json
@@ -675,6 +676,40 @@ async def _stream_speech_pcm(first: bytes, sentences: list[str], render, *, sse:
         yield _speech_done()
 
 
+_native_pcm_worker = ThreadPoolExecutor(max_workers=1, thread_name_prefix="native-tts")
+_native_pcm_lock = asyncio.Lock()
+
+
+async def _native_pcm_stream(backend, text, kw, *, sse):
+    from anyio import CancelScope
+    from services.tts_backend import engine_in_use
+    from services.watermark import mark_synthetic
+
+    def encode_next(iterator):
+        wav = next(iterator, None)
+        if wav is None:
+            return None
+        rate = backend.sample_rate
+        return _pcm24k(mark_synthetic(wav, rate, context="openai_compat.speech"), rate)
+
+    # Pin all generator steps to one thread. CUDA and MLX both use thread-local
+    # runtime state, and closing must unwind that state on the same thread.
+    async with _native_pcm_lock:
+        loop = asyncio.get_running_loop()
+        with engine_in_use(backend):
+            iterator = backend.stream_audio(text, **kw)
+            try:
+                while (chunk := await loop.run_in_executor(
+                    _native_pcm_worker, encode_next, iterator
+                )) is not None:
+                    yield _speech_delta(chunk) if sse else chunk
+            finally:
+                with CancelScope(shield=True):
+                    await loop.run_in_executor(_native_pcm_worker, iterator.close)
+        if sse:
+            yield _speech_done()
+
+
 def _audio_chunks(audio: bytes):
     for i in range(0, len(audio), _STREAM_CHUNK):
         yield audio[i:i + _STREAM_CHUNK]
@@ -891,6 +926,15 @@ async def create_speech(req: SpeechRequest):
             headers={"Retry-After": str(getattr(e, "retry_after", 30)),
                      "X-OmniVoice-Retryable": "true"},
         ) from e
+
+    can_stream = getattr(backend, "can_stream", None)
+    if (req.stream_format and req.response_format == "pcm" and req.duration is None
+            and can_stream is not None and can_stream(**kw)):
+        sse = req.stream_format == "sse"
+        return StreamingResponse(
+            _native_pcm_stream(backend, text, kw, sse=sse),
+            media_type="text/event-stream" if sse else "audio/pcm",
+        )
 
     # PCM segments can be joined without a container header or an encoder
     # reset. Preserve whole-utterance timing for an explicit duration.
