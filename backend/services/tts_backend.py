@@ -1906,6 +1906,8 @@ class OmniVoiceBackend(TTSBackend):
         # used to be dropped on the floor here — the API accepted it and gen_kw
         # never carried it, so it silently did nothing.
         gen_kw["preprocess_prompt"] = bool(kw.get("preprocess_prompt", True))
+        if kw.get("seed") is not None:
+            gen_kw["seed"] = kw["seed"]
         # Single-use reference hint (dub per-segment clips) — see
         # generate_with_cached_ref, which pops it before the model sees it.
         gen_kw["cache_ref"] = bool(kw.get("cache_ref", True))
