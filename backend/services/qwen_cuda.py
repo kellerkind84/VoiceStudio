@@ -49,9 +49,14 @@ class QwenCUDABackend(TTSBackend):
             if self._model is None:
                 from faster_qwen3_tts import FasterQwen3TTS
 
-                self._model = FasterQwen3TTS.from_pretrained(
+                engine = FasterQwen3TTS.from_pretrained(
                     os.environ["VOICESTUDIO_QWEN_CUDA_MODEL"], local_files_only=True,
                 )
+                model = engine.model.model
+                # The prompt encoder receives mel features in the main model
+                # dtype. Keep its convolution weights and biases in that dtype.
+                model.speaker_encoder.to(dtype=model.dtype)
+                self._model = engine
 
     def unload(self):
         self._prompts.clear()
