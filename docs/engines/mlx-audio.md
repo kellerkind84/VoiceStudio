@@ -147,3 +147,13 @@ Kokoro language errors list every language in the installed model’s table.
 “British English” and `en-gb` both select its British English voice pipeline.
 Display names from newer installed Kokoro tables are accepted too, so a language
 advertised by the error message can be selected without updating a hardcoded map.
+
+For Qwen3-TTS Base, requests to `/v1/audio/speech` with
+`response_format: "pcm"` and `stream_format: "audio"` can emit audio while
+the model is generating. Use a saved reference with a transcript and the
+default speed and duration. The stream is mono, signed 16-bit PCM at 24 kHz.
+
+The CUDA equivalent uses model ID `qwen3-tts`. It is available when
+`faster-qwen3-tts` is installed in the backend environment, CUDA is available,
+and `VOICESTUDIO_QWEN_CUDA_MODEL` points at a local Qwen3-TTS 0.6B Base
+checkpoint. Both engines use the same VoiceStudio voice library and speech API.

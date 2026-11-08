@@ -1017,3 +1017,26 @@ def test_mlx_qwen_base_clones_reference(local, tmp_path):
     assert "instruct" not in calls[0]
     with pytest.raises(ValueError, match="reference audio"):
         backend.generate("Hello.")
+
+
+def test_mlx_qwen_base_streams_reference_audio_in_chunks():
+    backend = tts_backend.MLXAudioBackend()
+    backend._model_id = backend.CURATED_MODELS["qwen3-tts-base"]
+    calls = []
+
+    def generate(**kwargs):
+        calls.append(kwargs)
+        yield types.SimpleNamespace(audio=[0.1, 0.2], sample_rate=24000)
+        yield types.SimpleNamespace(audio=[0.3], sample_rate=24000)
+
+    backend._model = types.SimpleNamespace(
+        config=types.SimpleNamespace(tts_model_type="base"), generate=generate,
+    )
+    assert backend.can_stream()
+    assert not backend.can_stream(speed=1.2)
+    chunks = list(backend.stream_audio("Hello.", ref_audio="lana.wav",
+                                      ref_text="Reference.", language="en"))
+    assert [tuple(chunk.shape) for chunk in chunks] == [(1, 2), (1, 1)]
+    assert calls[0]["stream"] is True
+    assert calls[0]["ref_text"] == "Reference."
+    assert calls[0]["lang_code"] == "english"
