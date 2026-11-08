@@ -2944,7 +2944,7 @@ class MLXAudioBackend(TTSBackend):
     gpu_compat = ("mps", "cpu")
     # generate() seeds mlx's RNG from the request's seed.
     supports_generation_seed = True
-    cloning_model_keys = ("csm",)
+    cloning_model_keys = ("csm", "qwen3-tts-base")
 
     @classmethod
     def cloning_model_labels(cls) -> tuple[str, ...]:
@@ -2959,6 +2959,7 @@ class MLXAudioBackend(TTSBackend):
         "kokoro":      "mlx-community/Kokoro-82M-bf16",
         "csm":         "mlx-community/csm-1b-8bit",
         "qwen3-tts":   "mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit",
+        "qwen3-tts-base": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
         "dia":         "mlx-community/Dia-1.6B",
         "chatterbox":  "mlx-community/Chatterbox-TTS-4bit",
         "melotts":     "mlx-community/MeloTTS-English-v3-MLX",
@@ -2987,6 +2988,7 @@ class MLXAudioBackend(TTSBackend):
         "kokoro": ("en", "es", "fr", "hi", "it", "pt", "ja", "zh"),
         "csm": ("en",),
         "qwen3-tts": ("zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"),
+        "qwen3-tts-base": ("zh", "en", "ja", "ko", "de", "fr", "ru", "pt", "es", "it"),
         "dia": ("en",),
         "chatterbox": ("en",),
         "melotts": ("en",),
@@ -3106,9 +3108,21 @@ class MLXAudioBackend(TTSBackend):
         return self._model_id
 
     def _curated_key(self) -> Optional[str]:
-        return next(
+        key = next(
             (key for key, repo in self.CURATED_MODELS.items() if repo == self._model_id), None
         )
+        if key or not self._model_id or not os.path.isabs(self._model_id):
+            return key
+        import json
+        from pathlib import Path
+
+        try:
+            config = json.loads((Path(self._model_id) / "config.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if isinstance(config, dict) and config.get("model_type") == "qwen3_tts" and config.get("tts_model_type") == "base":
+            return "qwen3-tts-base"
+        return None
 
     def _check_language(self, language: object) -> Optional[str]:
         # Kokoro's installed tables are authoritative and accept labels such
@@ -3127,12 +3141,7 @@ class MLXAudioBackend(TTSBackend):
 
     @property
     def supports_cloning(self) -> bool:
-        """Model-dependent — this adapter multiplexes 7+ curated models and
-        only some take a reference-audio speaker prompt. Other models may
-        ignore reference audio even when their signatures accept it. Of the
-        curated set, only CSM (`mlx-community/csm-1b-8bit`) is confirmed to
-        accept a reference prompt — default False for every other model,
-        curated or user-supplied, until positively confirmed."""
+        """Only curated or positively identified reference-capable models clone."""
         return self._curated_key() in self.cloning_model_keys
 
     def _ensure_loaded(self):
@@ -3207,7 +3216,12 @@ class MLXAudioBackend(TTSBackend):
         # mlx-audio refuses to run without one — so the engine was unusable no
         # matter what the user typed, and the reported failure was a bare
         # 400 quoting a library message (#1405).
-        if instruct:
+        if self._curated_key() == "qwen3-tts-base":
+            if not ref_audio:
+                raise ValueError("Qwen3-TTS Base needs a saved voice with reference audio.")
+            if getattr(getattr(self._model, "config", None), "tts_model_type", None) != "base":
+                raise ValueError("Select a Qwen3-TTS Base checkpoint for voice cloning.")
+        elif instruct:
             kwargs["instruct"] = instruct
         elif self._is_voice_design():
             raise ValueError(
@@ -3252,7 +3266,7 @@ class MLXAudioBackend(TTSBackend):
                 # set instead of silently speaking a language they don't know.
                 self._check_language(language)
                 code = self._normalize_language_code(language)
-                if self._curated_key() == "qwen3-tts":
+                if self._curated_key() in {"qwen3-tts", "qwen3-tts-base"}:
                     # mlx-audio Qwen's codec_language_id uses full names.
                     qwen_languages = {
                         "zh": "chinese", "en": "english", "ja": "japanese",
@@ -4125,6 +4139,7 @@ _MLX_AUDIO_MODEL_LABELS: dict[str, str] = {
     "kokoro":     "Kokoro (default, fast)",
     "csm":        "CSM (voice cloning)",
     "qwen3-tts":  "Qwen3-TTS (voice design)",
+    "qwen3-tts-base": "Qwen3-TTS Base (voice cloning)",
     "dia":        "Dia",
     "chatterbox": "Chatterbox",
     "melotts":    "MeloTTS (lightweight)",

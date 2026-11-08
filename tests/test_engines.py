@@ -988,3 +988,32 @@ def test_outetts_concurrent_calls_build_the_speaker_once(monkeypatch, tmp_path):
         t.join()
     assert len(built) == 1 and len(set(results)) == 1
     assert not [p for p in tmp_path.iterdir() if p.name.endswith(".tmp")]
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_mlx_qwen_base_clones_reference(local, tmp_path):
+    backend = tts_backend.MLXAudioBackend()
+    if local:
+        (tmp_path / "config.json").write_text('{"model_type":"qwen3_tts","tts_model_type":"base"}')
+        backend._model_id = str(tmp_path)
+    else:
+        backend._model_id = backend.CURATED_MODELS["qwen3-tts-base"]
+    backend._ensure_loaded = lambda: None
+    calls = []
+
+    def generate(**kwargs):
+        calls.append(kwargs)
+        return iter([types.SimpleNamespace(audio=[0.1] * 16)])
+
+    backend._model = types.SimpleNamespace(
+        config=types.SimpleNamespace(tts_model_type="base"), generate=generate,
+    )
+    assert backend.supports_cloning
+    backend.generate("Hello.", ref_audio="lana.wav", ref_text="Reference.", language="en",
+                     instruct="a higher voice")
+    assert calls[0]["ref_audio"] == "lana.wav"
+    assert calls[0]["ref_text"] == "Reference."
+    assert calls[0]["lang_code"] == "english"
+    assert "instruct" not in calls[0]
+    with pytest.raises(ValueError, match="reference audio"):
+        backend.generate("Hello.")

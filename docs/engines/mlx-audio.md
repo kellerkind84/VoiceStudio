@@ -34,6 +34,7 @@ One backend hosts many models. The curated set:
 | --- | --- | --- |
 | `kokoro` (default) | `mlx-community/Kokoro-82M-bf16` | small multilingual |
 | `csm` | `mlx-community/csm-1b-8bit` | voice cloning |
+| `qwen3-tts-base` | `mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit` | voice cloning |
 | `qwen3-tts` | `mlx-community/Qwen3-TTS-12Hz-1.7B-VoiceDesign-4bit` | voice design |
 | `dia` | `mlx-community/Dia-1.6B` | dialogue |
 | `chatterbox` | `mlx-community/Chatterbox-TTS-4bit` | expressive |
@@ -98,7 +99,7 @@ app's model download flow rather than installing into an unrelated system Python
   the model's callable signature does not accept them; supported voice,
   reference and language inputs, plus voice-design instructions (`instruct`),
   remain in the same request.
-- Of the curated choices, only `csm` is confirmed to consume a reference clip; the other models disregard reference audio. MLX-Audio therefore advertises cloning only when CSM is selected, and dub and batch jobs use that capability flag. Starting a dub, batch, or voice-conversion job with another model is refused with an error that names the active model and directs you to **CSM (voice cloning)** in Model Catalogue; switching engines remains an alternative. See [#2201](https://github.com/debpalash/VoiceStudio/issues/2201).
+- Select **Qwen3-TTS Base (voice cloning)** or **CSM (voice cloning)** in Model Catalogue. Qwen3-TTS Base uses the selected voice's reference audio and transcript. API clients can request `model: "mlx-audio"` and the saved voice ID after selecting Qwen3-TTS Base. An existing local Qwen3-TTS Base folder is also supported. The MLX adapter runs on Apple Silicon.
 - Voice design (text description → voice) is available through the
   Qwen3-TTS VoiceDesign model.
 - Which languages work depends on the model you load. Kokoro handles about
